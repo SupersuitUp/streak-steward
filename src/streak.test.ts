@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { captureStreak, householdStreakOf, streakOf, streaksOf } from './streak.js'
+import { captureStreak, householdStreakOf, streakOf, streaksOf, zonedStreakOf, zonedStreaksOf, zonesOf } from './streak.js'
+import { zoned } from './zoned.js'
 import type { StreakRow } from './streak.js'
 
 // Ported verbatim from the app these streaks came from, whose rows carried more than a streak reads.
@@ -89,5 +90,107 @@ describe('the household streak', () => {
     // The zone falls back this weekend: three snaps on three local days, 07:30 UTC being 00:30 local before and 23:30 local after.
     const rows = [r('2026-10-31T07:30:00Z'), r('2026-11-01T08:30:00Z'), r('2026-11-02T08:30:00Z')]
     expect(householdStreakOf(rows, new Date('2026-11-02T20:00:00Z'), rule)).toMatchObject({ count: 3, capturedToday: true })
+  })
+})
+
+// NOW is a Sunday, so a week (Monday to Sunday) holds every day these cases name.
+describe('a free skip a week on the device\'s own day', () => {
+  it('forgives one missed day a week, and counts nothing differently without the skip', () => {
+    expect(streakOf([at(2026, 9, 27), at(2026, 9, 25)], NOW, 1)).toEqual({ count: 2, postedToday: true })
+    expect(streakOf([at(2026, 9, 27), at(2026, 9, 25)], NOW)).toEqual({ count: 1, postedToday: true })
+  })
+  it('breaks on a second missed day in the same week', () => {
+    expect(streakOf([at(2026, 9, 27), at(2026, 9, 24)], NOW, 1)).toEqual({ count: 1, postedToday: true })
+  })
+  it('ends rather than walking back forever: nothing shared, and nothing shared for weeks', () => {
+    expect(streakOf([], NOW, 1)).toEqual({ count: 0, postedToday: false })
+    expect(streakOf([at(2026, 9, 1)], NOW, 1)).toEqual({ count: 0, postedToday: false })
+  })
+  it('gives each member and the together count the same forgiveness', () => {
+    const rows = [
+      row('ana', at(2026, 9, 27)), row('ana', at(2026, 9, 25)),
+      row('ben', at(2026, 9, 27)), row('ben', at(2026, 9, 25)),
+    ]
+    expect(streaksOf(rows, NOW, ['ana', 'ben'], 1)).toEqual({
+      ana: { count: 2, postedToday: true },
+      ben: { count: 2, postedToday: true },
+      together: { count: 2, postedToday: true },
+    })
+    expect(streaksOf(rows, NOW, ['ana', 'ben']).together).toEqual({ count: 1, postedToday: true })
+  })
+})
+
+// Two zones an hour apart, with the clock near midnight in the earlier one. Every instant here is
+// written in UTC and every zone is named, so these read the same wherever the suite runs.
+describe('a group day in several zones', () => {
+  const CENTRAL = 'America/Chicago'
+  const EASTERN = 'America/New_York'
+  const ZONES = { ana: EASTERN, ben: CENTRAL }
+  // 23:50 Monday in Central, which is already 00:50 Tuesday in Eastern.
+  const NOW_Z = new Date('2026-10-13T04:50:00Z')
+  // Ana shares late on Monday and late on Saturday: 23:30 Central both times, so Eastern reads
+  // each of them as the small hours of the next day.
+  const ANA = ['2026-10-13T04:30:00Z', '2026-10-11T04:30:00Z']
+  // Ben shares at 22:00 Central on Monday and on Sunday, which is the same day in both zones.
+  const BEN = ['2026-10-13T03:00:00Z', '2026-10-12T03:00:00Z']
+  const rows = [...ANA.map((createdAt) => ({ by: 'ana', createdAt })), ...BEN.map((createdAt) => ({ by: 'ben', createdAt }))]
+  const keys = ['ana', 'ben']
+
+  it('counts a time toward its day in every zone in play, so the shared evening holds', () => {
+    // Monday is Ana's in Central and Sunday is hers in Eastern; both are Ben's, so both are theirs.
+    expect(zonedStreaksOf(rows, NOW_Z, keys, ZONES)).toEqual({
+      ana: { count: 3, postedToday: true },
+      ben: { count: 2, postedToday: true },
+      together: { count: 2, postedToday: true },
+    })
+  })
+
+  it('is more generous than any one zone, and than each member in their own zone alone', () => {
+    // Central only: Ana's Saturday night is Saturday, so Sunday is not a day they shared.
+    expect(zonedStreaksOf(rows, NOW_Z, keys, CENTRAL).together).toEqual({ count: 1, postedToday: true })
+    // Eastern only: Ana's Monday night is Tuesday, so Monday is not one either and nothing is left.
+    expect(zonedStreaksOf(rows, NOW_Z, keys, EASTERN).together).toEqual({ count: 0, postedToday: false })
+    // Each in their own zone, which is the answer that looks right: Ana's days read in Eastern and
+    // Ben's in Central share only the Sunday, so Monday is lost and the pair is told tonight is
+    // the night it ends, with one day to its name instead of two that are safe.
+    const own = (times: string[], z: string) => times.map((t) => zoned(new Date(t), z).dayKey)
+    const anaOwn = own(ANA, EASTERN)
+    const benOwn = own(BEN, CENTRAL)
+    const bothKept = anaOwn.filter((d) => benOwn.includes(d))
+    expect({ anaOwn, benOwn, bothKept }).toEqual({
+      anaOwn: ['2026-10-13', '2026-10-11'], benOwn: ['2026-10-12', '2026-10-11'], bothKept: ['2026-10-11'],
+    })
+    expect(captureStreak(new Set(bothKept), '2026-10-12', '', 0)).toMatchObject({ count: 1, capturedToday: false })
+  })
+
+  it('never lets the together count pass a member\'s own', () => {
+    const s = zonedStreaksOf(rows, NOW_Z, keys, ZONES)
+    for (const m of keys) expect(s.together.count).toBeLessThanOrEqual(s[m].count)
+  })
+
+  it('reads one zone named for everyone exactly as a plain zone', () => {
+    const same = { ana: CENTRAL, ben: CENTRAL }
+    expect(zonedStreaksOf(rows, NOW_Z, keys, same)).toEqual(zonedStreaksOf(rows, NOW_Z, keys, CENTRAL))
+  })
+
+  it('counts today as done when it is done in any zone in play', () => {
+    // Zones a day and an hour apart: an hour ago is still yesterday in the later one.
+    const far = { ana: 'Pacific/Pago_Pago', ben: 'Pacific/Kiritimati' }
+    const now = new Date('2026-10-12T12:00:00Z')
+    const shared = [{ by: 'ana', createdAt: '2026-10-12T10:30:00Z' }]
+    expect(zonedStreaksOf(shared, now, ['ana'], far).ana.postedToday).toBe(true)
+    expect(zonedStreaksOf(shared, now, ['ana'], 'Pacific/Pago_Pago').ana.postedToday).toBe(false)
+  })
+
+  it('forgives one missed day a week here too, and counts one person on their own', () => {
+    const times = ['2026-10-13T03:00:00Z', '2026-10-11T03:00:00Z']
+    expect(zonedStreakOf(times, NOW_Z, CENTRAL, 1)).toEqual({ count: 2, postedToday: true })
+    expect(zonedStreakOf(times, NOW_Z, CENTRAL)).toEqual({ count: 1, postedToday: true })
+  })
+
+  it('refuses a record that names no zone, rather than counting nothing', () => {
+    expect(() => zonesOf({})).toThrow(/no zone/)
+    expect(zonesOf(CENTRAL)).toEqual([CENTRAL])
+    expect(zonesOf(ZONES)).toEqual([EASTERN, CENTRAL])
   })
 })

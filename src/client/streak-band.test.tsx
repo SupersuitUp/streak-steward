@@ -108,3 +108,38 @@ describe('useAtStake', () => {
     expect(screen.queryByRole('status')).toBeNull()
   })
 })
+
+// Two zones a day and an hour apart, so the same moment is a different calendar day in each and
+// neither can be the machine the suite happens to run on.
+describe('useAtStake in a named zone', () => {
+  const EARLY = 'Pacific/Kiritimati' // the first zone into a new day
+  const LATE = 'Pacific/Pago_Pago' // the last one out of the old day
+  const NOW = new Date('2026-10-12T10:40:00Z')
+  const sources: StreakSource[] = [{
+    id: 'snaps', label: 'Snaps', href: '/snaps', actionLabel: 'Share a snap', mode: 'each', members: ['ana'],
+    times: { ana: ['2026-10-11T12:00:00Z'] },
+  }]
+  const Home = ({ zone }: { zone?: string }) => <StreakBand result={useAtStake(sources, 'ana', zone)} />
+
+  beforeEach(() => { vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] }); vi.setSystemTime(NOW) })
+  afterEach(() => vi.useRealTimers())
+
+  it('reads the day in the zone it is given, not the one the device is in', () => {
+    // In the early zone that snap was yesterday, so the streak ends tonight.
+    render(<Home zone={EARLY} />)
+    expect(screen.getByRole('status')).toHaveTextContent('1 streak ends at midnight')
+    // In the late zone the same snap is today's, so there is nothing to do.
+    render(<Home zone={LATE} />)
+    expect(screen.getAllByRole('status').at(-1)).toHaveTextContent('Your streak is safe today.')
+  })
+
+  it('counts again at midnight in that zone rather than the device\'s', () => {
+    render(<Home zone={LATE} />)
+    expect(screen.getByRole('status')).toHaveTextContent('Your streak is safe today.')
+    // The next day begins in the late zone twenty minutes from now; the device's own midnight is
+    // somewhere else entirely, and waiting for it would leave the band a day stale.
+    act(() => { vi.advanceTimersToNextTimer() })
+    expect(new Date().toISOString()).toBe('2026-10-12T11:00:01.000Z')
+    expect(screen.getByRole('status')).toHaveTextContent('1 streak ends at midnight')
+  })
+})

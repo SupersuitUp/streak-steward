@@ -1,8 +1,8 @@
 // The steward: given every streak an app tracks, which ones end at midnight if nobody acts today,
-// whose move it is, and whether a reminder is due. Pure. The band on the phone calls atStake with
-// no time zone, so a day is the phone's own day, exactly as streakOf counts it. A server job passes
-// the person's time zone, because a server has no phone to ask.
-import { streaksOf, zonedStreaksOf, type StreakRow, type Streaks } from './streak.js'
+// whose move it is, and whether a reminder is due. Pure. With no time zone a day is the phone's own
+// day, exactly as streakOf counts it. An app whose streaks are kept in one zone passes that zone,
+// on the phone as well as on the server, so the two can never break a streak the other believes in.
+import { streaksOf, zonedStreaksOf, type StreakRow, type Streaks, type StreakZones } from './streak.js'
 import { minutesOf, zoned } from './zoned.js'
 
 /** One streak an app tracks, declared by the tile that owns it. */
@@ -21,6 +21,11 @@ export interface StreakSource {
   members: readonly string[]
   /** ISO times per member that count toward the streak. */
   times: Record<string, string[]>
+  /**
+   * One missed day in a Monday-to-Sunday week does not break this streak. Declared by the tile, so
+   * the band, the reminder and the tile's own screen cannot disagree about it. Default 0.
+   */
+  freeSkipsPerWeek?: 0 | 1
 }
 
 export type WhoseMove = 'you' | 'them' | 'both'
@@ -45,13 +50,17 @@ export interface AtStakeResult {
 }
 
 export interface AtStakeOptions {
-  /** Read the day in this IANA zone instead of the device's own. For a server. */
-  timeZone?: string
+  /**
+   * Read the day in a named IANA zone instead of the device's own: one zone for everyone, or the
+   * zone each member keeps, in which case a day counts in every zone in play.
+   */
+  timeZone?: StreakZones
 }
 
-function streaksFor(src: StreakSource, now: Date, timeZone?: string): Streaks {
+function streaksFor(src: StreakSource, now: Date, timeZone?: StreakZones): Streaks {
   const rows: StreakRow[] = src.members.flatMap((m) => (src.times[m] ?? []).map((createdAt) => ({ by: m, createdAt })))
-  return timeZone ? zonedStreaksOf(rows, now, src.members, timeZone) : streaksOf(rows, now, src.members)
+  const skips = src.freeSkipsPerWeek ?? 0
+  return timeZone ? zonedStreaksOf(rows, now, src.members, timeZone, skips) : streaksOf(rows, now, src.members, skips)
 }
 
 export function atStake(sources: StreakSource[], me: string, now: Date = new Date(), options: AtStakeOptions = {}): AtStakeResult {

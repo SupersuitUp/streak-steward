@@ -23,3 +23,18 @@ export function inWindow(slot: string, nowHhmm: string, windowMin = 60): boolean
   const d = minutesOf(nowHhmm) - minutesOf(slot)
   return d >= 0 && d < windowMin
 }
+
+// The device's own calendar day, in the same padded key the helpers above take, so one count can be
+// read in the phone's day or in a named zone without two formats and two Monday rules.
+const pad = (n: number) => String(n).padStart(2, '0')
+export const localDayKey = (d: Date) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
+
+// How long until a count would read a different day, so a screen left open overnight stops saying
+// yesterday's streaks are at stake. One second past midnight, in the named zone or the device's.
+// Every zone offset is a whole number of minutes, so the seconds are the same in all of them; a
+// clock change between now and midnight moves this by an hour at most, and the next look corrects it.
+export function msUntilMidnight(now: Date, timeZone?: string): number {
+  if (!timeZone) return new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1, 0, 0, 1).getTime() - now.getTime()
+  const sinceMidnight = minutesOf(zoned(now, timeZone).hhmm) * 60_000 + now.getSeconds() * 1000 + now.getMilliseconds()
+  return DAY_MS - sinceMidnight + 1000
+}

@@ -1,6 +1,6 @@
 {
   "name": "@supersuit/streak-steward",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Count streaks the same way in every app, and say on the home screen which ones end today and what saves them.",
   "type": "module",
   "exports": {

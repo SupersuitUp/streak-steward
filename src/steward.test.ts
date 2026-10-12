@@ -176,3 +176,45 @@ describe('listOf', () => {
     expect(listOf(['a', 'b', 'c'])).toBe('a, b and c')
   })
 })
+
+// Two zones an hour apart, read on the Tuesday morning after a late Monday night. Every instant is
+// written in UTC and every zone is named, so these read the same wherever the suite runs.
+describe('atStake across zones', () => {
+  const CENTRAL = 'America/Chicago'
+  const EASTERN = 'America/New_York'
+  const NOW_Z = new Date('2026-10-13T14:00:00Z') // Tuesday morning in both
+  // Ana shares at 23:30 Central on the Monday and the Saturday; Ben at 22:00 Central on the Monday
+  // and the Sunday. Read in both zones, the days they both kept are the Sunday and the Monday.
+  const src = together({
+    times: {
+      ana: ['2026-10-13T04:30:00Z', '2026-10-11T04:30:00Z'],
+      ben: ['2026-10-13T03:00:00Z', '2026-10-12T03:00:00Z'],
+    },
+  })
+
+  it('counts a day in every zone the members keep, so a late night is not a lost day', () => {
+    const r = atStake([src], 'ana', NOW_Z, { timeZone: { ana: EASTERN, ben: CENTRAL } })
+    expect(r.rows[0]).toMatchObject({ count: 2, whoseMove: 'them', waitingOn: ['ben'] })
+  })
+
+  it('is longer than the same streak read in either zone on its own', () => {
+    // Central alone loses the Sunday (Ana's Saturday night is a Saturday there).
+    expect(atStake([src], 'ana', NOW_Z, { timeZone: CENTRAL }).rows[0]).toMatchObject({ count: 1 })
+    // Eastern alone loses the Monday as well, and with it the whole streak.
+    expect(atStake([src], 'ana', NOW_Z, { timeZone: EASTERN })).toEqual({ rows: [], safe: 0, total: 0 })
+  })
+})
+
+describe('a streak that declares a free skip a week', () => {
+  // NOW is a Sunday, so the days below are one Monday-to-Sunday week.
+  const times = { ana: [at(26), at(24)] }
+  it('keeps the streak the band would otherwise have dropped a day of', () => {
+    expect(atStake([each({ times, freeSkipsPerWeek: 1 })], 'ana', NOW).rows[0]).toMatchObject({ count: 2 })
+    expect(atStake([each({ times })], 'ana', NOW).rows[0]).toMatchObject({ count: 1 })
+  })
+  it('is the tile\'s own declaration, so a zone changes nothing about it', () => {
+    const src = each({ times: { ana: ['2026-10-13T03:00:00Z', '2026-10-11T03:00:00Z'] }, freeSkipsPerWeek: 1 })
+    const r = atStake([src], 'ana', new Date('2026-10-13T14:00:00Z'), { timeZone: 'America/Chicago' })
+    expect(r.rows[0]).toMatchObject({ count: 2 })
+  })
+})

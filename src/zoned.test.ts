@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { addDays, daysBetween, inWindow, minutesOf, weekStart, zoned } from './zoned.js'
+import { addDays, daysBetween, inWindow, localDayKey, minutesOf, msUntilMidnight, weekStart, zoned } from './zoned.js'
 
 describe('zoned', () => {
   it('reads the day and the time in the zone, not the server\'s', () => {
@@ -30,5 +30,26 @@ describe('zoned', () => {
     expect(inWindow('08:30', '09:30')).toBe(false)
     expect(inWindow('08:30', '08:29')).toBe(false)
     expect(minutesOf('01:05')).toBe(65)
+  })
+})
+
+describe('localDayKey', () => {
+  it('pads the device\'s own day, so it reads in the same key the week and day helpers take', () => {
+    expect(localDayKey(new Date(2026, 0, 5, 23, 59))).toBe('2026-01-05')
+    expect(localDayKey(new Date(2026, 10, 12, 0, 0))).toBe('2026-11-12')
+    expect(weekStart(localDayKey(new Date(2026, 9, 1, 12)))).toBe('2026-09-28')
+  })
+})
+
+describe('msUntilMidnight', () => {
+  // The same instant, read in two zones a day apart: 00:40 on one calendar day, 23:40 the evening
+  // before on the other. A screen counting in one of them must not wait for the other's midnight.
+  const now = new Date('2026-10-12T10:40:30.000Z')
+  it('is the time left in the named zone\'s day, one second past its midnight', () => {
+    expect(msUntilMidnight(now, 'Pacific/Kiritimati')).toBe(83_971_000)
+    expect(msUntilMidnight(now, 'Pacific/Pago_Pago')).toBe(1_171_000)
+  })
+  it('is the device\'s own midnight when no zone is named', () => {
+    expect(msUntilMidnight(new Date(2026, 9, 12, 23, 59, 0))).toBe(61_000)
   })
 })

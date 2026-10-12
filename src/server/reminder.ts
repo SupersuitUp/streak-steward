@@ -3,8 +3,13 @@ import { atStake, localClock, reminderDue, type AtStakeResult, type StreakSource
 export interface ReminderForInput {
   sources: StreakSource[]
   me: string
-  /** The person's own IANA time zone. */
+  /** The person's own IANA time zone: their clock, and the day their streaks are counted in. */
   timeZone: string
+  /**
+   * The zone each member keeps, when they do not all keep one. The days are then counted in every
+   * zone in play, as generously as the band on their phones counts them. Default: `timeZone` alone.
+   */
+  memberZones?: Record<string, string>
   /** HH:MM in their zone. Default 20:00. */
   remindAt?: string
   /** The day a reminder was last sent to them. Store `day` from the result when you send. */
@@ -20,7 +25,7 @@ export interface ReminderFor { due: boolean; text?: string; day: string; result:
 export function reminderFor(input: ReminderForInput): ReminderFor {
   const now = input.now ?? new Date()
   const clock = localClock(now, input.timeZone)
-  const result = atStake(input.sources, input.me, now, { timeZone: input.timeZone })
+  const result = atStake(input.sources, input.me, now, { timeZone: input.memberZones ?? input.timeZone })
   const r = reminderDue({
     rows: result.rows, localTime: clock.time, remindAt: input.remindAt ?? '20:00',
     lastRemindedDay: input.lastRemindedDay, today: clock.day,
